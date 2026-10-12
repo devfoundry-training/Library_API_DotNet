@@ -1,0 +1,106 @@
+# name: the label GitHub shows for this workflow
+name: CI
+
+# on: the events that start the workflow, here every push and every pull request
+on:
+  push:
+  pull_request:
+
+# permissions: the workflow only reads the repository
+permissions:
+  contents: read
+
+# jobs: the work to do; jobs run in parallel unless one "needs" another
+jobs:
+  # unit-tests: build the solution and run the service tests
+  unit-tests:
+    # runs-on: the kind of machine GitHub starts for the job
+    runs-on: ubuntu-latest
+    # steps: run one after another on that machine
+    steps:
+      # uses: run a ready-made action; checkout fetches this repository
+      - uses: actions/checkout@v7
+
+      # with: the inputs an action takes; setup-dotnet installs the .NET SDK
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      # run: a shell command
+      - name: Build
+        run: dotnet build --configuration Release
+
+      - name: Unit tests
+        run: dotnet test --configuration Release --no-build
+
+  # conformance: start the API and run the contract's suite against it, once per database
+  conformance:
+    # needs: only start when the unit tests have passed
+    needs: unit-tests
+    runs-on: ubuntu-latest
+
+    # strategy.matrix: run this job once for each value, here each database
+    strategy:
+      # fail-fast: false lets the other database finish when one fails
+      fail-fast: false
+      matrix:
+        database: [postgresql, sqlite]
+
+    # services: containers that run beside the job; PostgreSQL 17 for the postgresql leg
+    services:
+      postgres:
+        image: postgres:17
+        # env: environment variables for the container
+        env:
+          POSTGRES_USER: library
+          POSTGRES_PASSWORD: library
+          POSTGRES_DB: library
+        # ports: publish the database port on the runner
+        ports:
+          - 5432:5432
+        # options: extra docker run flags; wait until PostgreSQL accepts connections
+        options: >-
+          --health-cmd "pg_isready -U library -d library"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+
+    # env at job level: every step sees these; the app reads them at start-up
+    env:
+      PORT: "8000"
+      TEST_MODE: "1"
+      # ${{ }}: an expression, worked out by GitHub before the step runs
+      DATABASE_URL: ${{ matrix.database == 'postgresql' && 'postgresql://library:library@localhost:5432/library' || 'sqlite:///library.db' }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # path: check the contract repo out into ./contract, beside this one
+      - name: Check out the contract
+        uses: actions/checkout@v7
+        with:
+          repository: devfoundry-training/Library_API_Contract
+          path: contract
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Build
+        run: dotnet build src/Library.Api --configuration Release
+
+      # nohup ... &: start the API in the background, then wait for /health
+      - name: Start the API (${{ matrix.database }})
+        run: |
+          nohup dotnet src/Library.Api/bin/Release/net10.0/Library.Api.dll > app.log 2>&1 &
+          for _ in $(seq 1 60); do curl -fs http://localhost:8000/health && break; sleep 1; done
+
+      - name: Conformance suite
+        run: python contract/conformance/run.py --base-url http://localhost:8000
+
+      # if: failure(): only run this step when an earlier step failed
+      - name: Server log
+        if: failure()
+        run: cat app.log
