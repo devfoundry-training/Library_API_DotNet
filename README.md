@@ -1,5 +1,7 @@
 # Library API: ASP.NET Core
 
+[![CI](https://github.com/devfoundry-training/Library_API_DotNet/actions/workflows/ci.yml/badge.svg)](https://github.com/devfoundry-training/Library_API_DotNet/actions/workflows/ci.yml)
+
 Part of the DevFoundry Library API series: one REST API for a small library (books, members, loans and fines),
 built the same way in several stacks. This repository is the ASP.NET Core version: a minimal API on .NET 10 with
 Entity Framework Core 10, migrations for SQLite and PostgreSQL, and xUnit tests for the service layer.
